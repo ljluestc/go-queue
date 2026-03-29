@@ -113,8 +113,8 @@ func (p *producerCluster) getWriteNodes() []Producer {
 	}
 
 	nodes := p.cloneNodes()
-	// 为每次调用创建独立的 rand 实例，避免并发冲突
-localRng := rand.New(rand.NewSource(time.Now().UnixNano() ^ int64(time.Now().Unix())))
+	// Create a per-call rand instance to avoid concurrent access on a shared *rand.Rand.
+	localRng := rand.New(rand.NewSource(time.Now().UnixNano() ^ int64(time.Now().Unix())))
 	localRng.Shuffle(len(nodes), func(i, j int) {
 		nodes[i], nodes[j] = nodes[j], nodes[i]
 	})
