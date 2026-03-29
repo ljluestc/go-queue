@@ -4,7 +4,6 @@ import (
 	"log"
 	"math/rand"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/zeromicro/go-zero/core/errorx"
@@ -30,17 +29,9 @@ type (
 	}
 
 	producerCluster struct {
-		mu    sync.RWMutex
 		nodes []Producer
 	}
 )
-
-var rng *rand.Rand
-
-func init() {
-	source := rand.NewSource(time.Now().UnixNano())
-	rng = rand.New(source)
-}
 
 func NewProducer(beanstalks []Beanstalk) Producer {
 	if len(beanstalks) < minWrittenNodes {
@@ -67,8 +58,6 @@ func (p *producerCluster) At(body []byte, at time.Time) (string, error) {
 }
 
 func (p *producerCluster) Close() error {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
 	var be errorx.BatchError
 	for _, node := range p.nodes {
 		if err := node.Close(); err != nil {
@@ -84,13 +73,10 @@ func (p *producerCluster) Delay(body []byte, delay time.Duration) (string, error
 }
 
 func (p *producerCluster) Revoke(ids string) error {
-	p.mu.RLock()
-	nodes := append([]Producer(nil), p.nodes...)
-	p.mu.RUnlock()
 	var be errorx.BatchError
 
 	fx.From(func(source chan<- interface{}) {
-		for _, node := range nodes {
+		for _, node := range p.nodes {
 			source <- node
 		}
 	}).Map(func(item interface{}) interface{} {
@@ -112,8 +98,6 @@ func (p *producerCluster) at(body []byte, at time.Time) (string, error) {
 }
 
 func (p *producerCluster) cloneNodes() []Producer {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
 	return append([]Producer(nil), p.nodes...)
 }
 
@@ -124,22 +108,17 @@ func (p *producerCluster) delay(body []byte, delay time.Duration) (string, error
 }
 
 func (p *producerCluster) getWriteNodes() []Producer {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
 	if len(p.nodes) <= replicaNodes {
 		return p.nodes
 	}
 
-	nodes := append([]Producer(nil), p.nodes...)
-	p.mu.RUnlock()
-
-	rng.Shuffle(len(nodes), func(i, j int) {
+	nodes := p.cloneNodes()
+	// 为每次调用创建独立的 rand 实例，避免并发冲突
+	localRng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	localRng.Shuffle(len(nodes), func(i, j int) {
 		nodes[i], nodes[j] = nodes[j], nodes[i]
 	})
-
-	p.mu.RLock()
 	return nodes[:replicaNodes]
-}
 }
 
 func (p *producerCluster) insert(fn func(node Producer) (string, error)) (string, error) {
